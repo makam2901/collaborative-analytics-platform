@@ -1,5 +1,3 @@
-
-
 services:
   backend:
     build: ./backend
@@ -7,18 +5,23 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   frontend:
     build: ./frontend
     ports:
       - "3000:3000"
     volumes:
-      # Mounts the project directory, allowing for hot-reloading
       - ./frontend:/app
-      # Prevents the local node_modules from overwriting the container's
       - /app/node_modules
     stdin_open: true
     tty: true
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy

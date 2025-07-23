@@ -1,4 +1,3 @@
-i
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -24,5 +23,4 @@ app.add_middleware(
 @app.get("/api")
 def read_root():
     """A simple endpoint to confirm the API is running."""
-    return {"message": "Hello from the FastAPI Backend! 🚀"}
-
+    return {"message": "Hello, whats up? from the FastAPI Backend! 🚀"}
