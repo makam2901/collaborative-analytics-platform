@@ -1,0 +1,27 @@
+# Web Framework
+fastapi
+uvicorn[standard]
+
+# Database & ORM
+sqlmodel # Combines Pydantic and SQLAlchemy
+psycopg2-binary # PostgreSQL driver
+alembic # Database migrations
+redis # Redis client for caching/websockets
+
+# Authentication & Security
+python-jose[cryptography] # For handling JWTs (JSON Web Tokens)
+passlib[bcrypt] # For password hashing
+
+# Notebook & Data Handling
+jupyter-client # To interact with Jupyter kernels programmatically
+pandas # For data manipulation and analysis
+
+# MLOps & Machine Learning
+mlflow
+scikit-learn
+
+# LLM Integration
+google-generativeai # For connecting to Google's generative models
+
+# Utilities
+python-dotenv # For managing environment variables from a .env file
