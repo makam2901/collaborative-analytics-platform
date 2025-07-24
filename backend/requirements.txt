@@ -2,26 +2,29 @@
 fastapi
 uvicorn[standard]
 
+# Form Data
+python-multipart
+
 # Database & ORM
-sqlmodel # Combines Pydantic and SQLAlchemy
-psycopg2-binary # PostgreSQL driver
-alembic # Database migrations
-redis # Redis client for caching/websockets
+sqlmodel
+psycopg2-binary
+alembic
+redis
 
 # Authentication & Security
-python-jose[cryptography] # For handling JWTs (JSON Web Tokens)
-passlib[bcrypt] # For password hashing
+python-jose[cryptography]
+passlib[bcrypt]
 
 # Notebook & Data Handling
-jupyter-client # To interact with Jupyter kernels programmatically
-pandas # For data manipulation and analysis
+jupyter-client
+pandas
 
 # MLOps & Machine Learning
 mlflow
 scikit-learn
 
 # LLM Integration
-google-generativeai # For connecting to Google's generative models
+google-generativeai
 
 # Utilities
-python-dotenv # For managing environment variables from a .env file
+python-dotenv

@@ -9,3 +9,8 @@ class User(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     email: str = Field(unique=True)
     hashed_password: str
+
+class UserCreate(SQLModel):
+    username: str
+    email: str
+    password: str
