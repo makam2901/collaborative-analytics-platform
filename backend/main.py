@@ -1,4 +1,6 @@
 from fastapi import UploadFile, File, Form
+from database.models import ProjectReadWithDatasets
+from database.models import CodeExecutionRequest
 
 import pandas as pd
 from database.models import QueryRequest
@@ -195,6 +197,7 @@ def upload_dataset(
     return new_dataset
 
 # Remove the old query_dataset function and replace it with this one.
+# Replace the existing query_project function in main.py
 
 @app.post("/api/projects/{project_id}/query")
 def query_project(
@@ -213,63 +216,139 @@ def query_project(
     if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 2. Get all datasets associated with the project
     datasets = project.datasets
     if not datasets:
         raise HTTPException(status_code=400, detail="No datasets in this project to query.")
 
-    # 3. Prepare the multi-table context for the LLM
+    # 2. Prepare the multi-table context and the code to load the data
     tables_context = []
     code_preamble = ["import pandas as pd", "from pandasql import sqldf"]
+    
+    # We will pass a dictionary of DataFrames to pandasql
+    local_vars_for_exec = {}
 
     for ds in datasets:
         try:
-            df_head = pd.read_csv(ds.file_path, nrows=5)
-            # Use the clean table_name for variable names
+            df = pd.read_csv(ds.file_path)
+            # For Python, the variable will be the clean table name + '_df'
+            # For SQL, the table name will be just the clean table name
             df_variable_name = f"{ds.table_name}_df"
-            code_preamble.append(f"{df_variable_name} = pd.read_csv('{ds.file_path}')")
             
+            # Add the dataframe to a dictionary for later execution
+            local_vars_for_exec[df_variable_name] = df
+            
+            # Build the context for the LLM prompt
             tables_context.append({
                 "table_name": ds.table_name,
                 "variable_name": df_variable_name,
                 "description": ds.description,
-                "columns": df_head.columns.tolist(),
-                "head": df_head.to_string()
+                "columns": df.columns.tolist()
             })
+            # Add the code to load this specific dataframe to our preamble
+            code_preamble.append(f"{df_variable_name} = pd.read_csv(r'{ds.file_path}')")
+
         except Exception as e:
-            # Silently skip files that can't be read, or handle more gracefully
             print(f"Could not read or process {ds.file_name}: {e}")
             continue
     
-    # 4. Generate code using the LLM with the full context
+    # 3. Generate code using the LLM with the full context
     generated_code = generate_code(
         question=request.question,
         tables_context=tables_context,
         language=request.language
     )
 
-    # 5. Prepare the full code for execution
-    if request.language == "python":
-        # The preamble already loads the dataframes
-        full_code_to_execute = "\n".join(code_preamble) + f"\n{generated_code}"
-    elif request.language == "sql":
-        # The SQL query will reference table names, pandasql will find them in globals()
-        # We still need the preamble to load the dataframes
-        sql_preamble = "\n".join(code_preamble)
+    # 4. Prepare the full code for execution
+    preamble_str = "\n".join(code_preamble)
+    
+    if request.language == "sql":
+        # For SQL, pandasql needs the dataframes in its environment. 
+        # We need to map the clean table names to the dataframe variables.
+        # e.g., {'races': races_df, 'results': results_df}
+        sql_env_str_list = [f"'{tbl['table_name']}': {tbl['variable_name']}" for tbl in tables_context]
+        sql_env_str = "{" + ", ".join(sql_env_str_list) + "}"
+
         full_code_to_execute = f"""
-{sql_preamble}
-pysqldf = lambda q: sqldf(q, globals())
+{preamble_str}
+pysqldf = lambda q: sqldf(q, {sql_env_str})
 sql_query = '''{generated_code.replace("'''", "''")}'''
 result = pysqldf(sql_query)
 print(result)
 """
-    
-    # 6. Execute the code
+    else: # Python
+        full_code_to_execute = f"{preamble_str}\n{generated_code}"
+
+    # 5. Execute the code
     execution_results = execute_code_in_kernel(full_code_to_execute)
 
-    # 7. Return the response
+    # 6. Return the response
     return {
         "language": request.language,
         "generated_code": generated_code,
         "execution_results": execution_results,
     }
+
+@app.get("/api/projects/{project_id}", response_model=ProjectReadWithDatasets)
+def read_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Retrieve a single project and its datasets, owned by the current user.
+    """
+    project = session.get(Project, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+
+@app.post("/api/projects/{project_id}/run-code")
+def run_code(
+    project_id: int,
+    request: CodeExecutionRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Executes a given block of code (Python or SQL) within the context
+    of a project's datasets.
+    """
+    # 1. Verify ownership and fetch project datasets (same as before)
+    project = session.get(Project, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    datasets = project.datasets
+    if not datasets:
+        raise HTTPException(status_code=400, detail="No datasets in this project to query.")
+
+    # 2. Prepare the code preamble to load all dataframes (same as before)
+    code_preamble = ["import pandas as pd", "from pandasql import sqldf"]
+    for ds in datasets:
+        df_variable_name = f"{ds.table_name}_df"
+        code_preamble.append(f"{df_variable_name} = pd.read_csv(r'{ds.file_path}')")
+
+    preamble_str = "\n".join(code_preamble)
+    
+    # 3. Prepare the full code string for execution based on language
+    if request.language == "sql":
+        sql_env_str_list = [f"'{ds.table_name}': {ds.table_name}_df" for ds in datasets]
+        sql_env_str = "{" + ", ".join(sql_env_str_list) + "}"
+        
+        full_code_to_execute = f"""
+{preamble_str}
+pysqldf = lambda q: sqldf(q, {sql_env_str})
+sql_query = '''{request.code.replace("'''", "''")}'''
+result = pysqldf(sql_query)
+print(result)
+"""
+    else: # Python
+        full_code_to_execute = f"{preamble_str}\n{request.code}"
+
+    # 4. Execute the code
+    execution_results = execute_code_in_kernel(full_code_to_execute)
+
+    # 5. Return only the execution results
+    return {"execution_results": execution_results}

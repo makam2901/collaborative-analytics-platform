@@ -43,6 +43,8 @@ services:
       - /app/node_modules
     stdin_open: true
     tty: true
+    environment:
+      - CHOKIDAR_USEPOLLING=true
     depends_on:
       backend:
         condition: service_healthy

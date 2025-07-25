@@ -1,19 +1,31 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
+import { useAuth } from './context/AuthContext';
+import ProjectPage from './pages/ProjectPage';
 import './App.css';
 
 function App() {
+  const { token, logout } = useAuth();
+
   return (
     <Router>
       <div className="App">
         <nav>
           <ul>
-            <li><Link to="/login">Login</Link></li>
-            <li><Link to="/register">Register</Link></li>
-            <li><Link to="/dashboard">Dashboard</Link></li>
+            {!token ? (
+              <>
+                <li><Link to="/login">Login</Link></li>
+                <li><Link to="/register">Register</Link></li>
+              </>
+            ) : (
+              <>
+                <li><Link to="/dashboard">Dashboard</Link></li>
+                <li><button onClick={logout}>Logout</button></li>
+              </>
+            )}
           </ul>
         </nav>
 
@@ -21,8 +33,18 @@ function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/" element={<h2>Welcome! Please log in.</h2>} />
+            <Route 
+              path="/dashboard" 
+              element={token ? <DashboardPage /> : <Navigate to="/login" />} 
+            />
+            <Route 
+              path="/" 
+              element={token ? <Navigate to="/dashboard" /> : <Navigate to="/login" />} 
+            />
+            <Route 
+              path="/project/:projectId" 
+              element={token ? <ProjectPage /> : <Navigate to="/login" />} 
+            />
           </Routes>
         </main>
       </div>
@@ -31,3 +53,4 @@ function App() {
 }
 
 export default App;
+

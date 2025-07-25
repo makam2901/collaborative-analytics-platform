@@ -65,3 +65,16 @@ class QueryRequest(SQLModel):
     """Data model for a user's natural language query."""
     question: str
     language: QueryLanguage = QueryLanguage.python # Default to python
+
+class DatasetRead(SQLModel):
+    id: int
+    file_name: str
+    description: Optional[str]
+    table_name: str
+
+class ProjectReadWithDatasets(ProjectRead):
+    datasets: List[DatasetRead] = []
+
+class CodeExecutionRequest(SQLModel):
+    code: str
+    language: QueryLanguage

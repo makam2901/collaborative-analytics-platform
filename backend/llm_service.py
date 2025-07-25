@@ -11,14 +11,14 @@ def generate_code(question: str, tables_context: list, language: QueryLanguage) 
     Generates code from a natural language question using the context of multiple tables.
     """
     
-    context_str = ""
-    for table in tables_context:
-        context_str += f"- DataFrame variable name: `{table['variable_name']}` (represents the table `{table['table_name']}`)\n"
-        context_str += f"  Description: {table['description']}\n"
-        context_str += f"  Columns: {', '.join(table['columns'])}\n\n"
-
     # Select the prompt based on the chosen language
     if language == QueryLanguage.python:
+        context_str = ""
+        for table in tables_context:
+            context_str += f"- DataFrame variable name: `{table['variable_name']}`\n"
+            context_str += f"  Description: {table['description']}\n"
+            context_str += f"  Columns: {', '.join(table['columns'])}\n\n"
+            
         prompt = f"""
         You are an expert Python data analyst. Your task is to write Python code to answer a question by analyzing one or more pandas DataFrames.
         
@@ -28,17 +28,12 @@ def generate_code(question: str, tables_context: list, language: QueryLanguage) 
         The user's question is: "{question}"
 
         Your response MUST follow these rules:
-        1. You MUST write code that operates on the existing DataFrames listed above.
+        1. You MUST write code that operates on the existing DataFrames listed above (e.g., `races_df`, `results_df`).
         2. You MUST NOT include any code to read data (e.g., NO `pd.read_csv`).
         3. You MUST provide ONLY the raw Python code. No comments, no explanations, no markdown formatting.
         4. The code should be a single expression or a short script that produces the answer. The final line must be the result.
-
-        Example Question: "Show me the names of all the races"
-        Example Output:
-        races_df['name']
         """
     elif language == QueryLanguage.sql:
-        # For SQL, we use the clean table name, not the variable name
         sql_context_str = ""
         for table in tables_context:
             sql_context_str += f"- Table name: `{table['table_name']}`\n"
@@ -54,7 +49,7 @@ def generate_code(question: str, tables_context: list, language: QueryLanguage) 
         The user's question is: "{question}"
         
         Your response MUST follow these rules:
-        1. Your query MUST operate on the tables listed above.
+        1. Your query MUST operate on the tables listed above, using their specified names (e.g., `races`, `results`).
         2. Provide ONLY the raw SQL query, with no explanation or markdown.
         """
     else:
