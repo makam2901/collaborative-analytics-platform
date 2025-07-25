@@ -28,3 +28,9 @@ google-generativeai
 
 # Utilities
 python-dotenv
+
+# Notebook & Data Handling
+jupyter-client
+ipykernel
+pandas
+pandasql
