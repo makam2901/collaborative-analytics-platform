@@ -9,23 +9,20 @@ import "ace-builds/src-noconflict/mode-sql";
 import "ace-builds/src-noconflict/theme-github";
 
 function ProjectPage() {
-    // ... (all the state and functions from the previous step remain the same)
+    // All the state and functions from the previous step remain the same...
     const { projectId } = useParams();
     const { token } = useAuth();
     const [project, setProject] = useState(null);
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(true);
-
     const [fileToUpload, setFileToUpload] = useState(null);
     const [datasetDescription, setDatasetDescription] = useState('');
     const [uploadError, setUploadError] = useState('');
-
     const [question, setQuestion] = useState('');
     const [language, setLanguage] = useState('python');
     const [queryResult, setQueryResult] = useState(null);
     const [isQueryLoading, setIsQueryLoading] = useState(false);
     const [queryError, setQueryError] = useState('');
-    
     const [editableCode, setEditableCode] = useState("");
 
     const fetchProjectDetails = useCallback(async () => {
@@ -40,7 +37,7 @@ function ProjectPage() {
                 const data = await response.json();
                 setProject(data);
             } else { setError('Failed to fetch project details.'); }
-        } catch (err) { setError('An error occurred.'); } 
+        } catch (err) { setError('An error occurred.'); }
         finally { setIsLoading(false); }
     }, [projectId, token]);
 
@@ -91,7 +88,7 @@ function ProjectPage() {
                 const errorData = await response.json();
                 setQueryError(errorData.detail || 'Failed to execute query.');
             }
-        } catch (err) { setQueryError('An error occurred while querying.'); } 
+        } catch (err) { setQueryError('An error occurred while querying.'); }
         finally { setIsQueryLoading(false); }
     };
     

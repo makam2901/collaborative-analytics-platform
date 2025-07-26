@@ -34,3 +34,4 @@ jupyter-client
 ipykernel
 pandas
 pandasql
+plotly

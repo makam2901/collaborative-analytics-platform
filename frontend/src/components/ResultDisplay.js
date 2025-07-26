@@ -3,7 +3,7 @@ import Plot from 'react-plotly.js';
 
 function ResultDisplay({ result }) {
   // Check if the result is a Plotly JSON object
-  if (result.type === 'plotly_json' && typeof result.data === 'object') {
+  if (result.type === 'plotly_json' && typeof result.data === 'string') {
     try {
       const plotData = JSON.parse(result.data);
       return (

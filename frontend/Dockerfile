@@ -1,16 +1,26 @@
-# Use the full Debian-based Node image for better compatibility
-FROM node:18
+# --- Stage 1: The Builder ---
+# This stage installs all dependencies
 
-# Set the working directory
+FROM node:18 AS builder
+
 WORKDIR /app
 
-# Copy package.json and package-lock.json (if it exists)
-COPY package*.json ./
+# Copy package files
+COPY package.json ./
+COPY package-lock.json ./
 
-# Clean the npm cache and install dependencies forcefully
-# This ensures a completely fresh installation
-RUN npm cache clean --force
-RUN npm install
+# Use 'npm ci' for a clean, reliable install
+RUN npm ci
+
+# --- Stage 2: The Final Image ---
+# This stage creates the final, lean container
+
+FROM node:18
+
+WORKDIR /app
+
+# Copy the installed dependencies from the 'builder' stage
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy the rest of the application source code
 COPY . .
