@@ -2,27 +2,29 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import AceEditor from "react-ace";
-import ResultDisplay from '../components/ResultDisplay'; // Import the new component
+import ResultDisplay from '../components/ResultDisplay';
 
 import "ace-builds/src-noconflict/mode-python";
 import "ace-builds/src-noconflict/mode-sql";
 import "ace-builds/src-noconflict/theme-github";
 
 function ProjectPage() {
-    // All the state and functions from the previous step remain the same...
     const { projectId } = useParams();
     const { token } = useAuth();
     const [project, setProject] = useState(null);
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(true);
+
     const [fileToUpload, setFileToUpload] = useState(null);
     const [datasetDescription, setDatasetDescription] = useState('');
     const [uploadError, setUploadError] = useState('');
+
     const [question, setQuestion] = useState('');
     const [language, setLanguage] = useState('python');
     const [queryResult, setQueryResult] = useState(null);
     const [isQueryLoading, setIsQueryLoading] = useState(false);
     const [queryError, setQueryError] = useState('');
+    
     const [editableCode, setEditableCode] = useState("");
 
     const fetchProjectDetails = useCallback(async () => {
@@ -37,7 +39,7 @@ function ProjectPage() {
                 const data = await response.json();
                 setProject(data);
             } else { setError('Failed to fetch project details.'); }
-        } catch (err) { setError('An error occurred.'); }
+        } catch (err) { setError('An error occurred.'); } 
         finally { setIsLoading(false); }
     }, [projectId, token]);
 
@@ -83,12 +85,12 @@ function ProjectPage() {
             if (response.ok) {
                 const data = await response.json();
                 setQueryResult(data);
-                setEditableCode(data.generated_code);
+                setEditableCode(data.aggregation_code || data.generated_code || "");
             } else {
                 const errorData = await response.json();
                 setQueryError(errorData.detail || 'Failed to execute query.');
             }
-        } catch (err) { setQueryError('An error occurred while querying.'); }
+        } catch (err) { setQueryError('An error occurred while querying.'); } 
         finally { setIsQueryLoading(false); }
     };
     
@@ -99,12 +101,12 @@ function ProjectPage() {
             const response = await fetch(`/api/projects/${projectId}/run-code`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ code: editableCode, language }),
+                body: JSON.stringify({ code: editableCode, language: queryResult.language }),
             });
 
             if (response.ok) {
                 const data = await response.json();
-                setQueryResult(prevResult => ({ ...prevResult, execution_results: data.execution_results }));
+                setQueryResult(prevResult => ({ ...prevResult, ...data }));
             } else {
                 const errorData = await response.json();
                 setQueryError(errorData.detail || 'Failed to run edited code.');
@@ -119,6 +121,10 @@ function ProjectPage() {
     if (isLoading) return <p>Loading project...</p>;
     if (error) return <p style={{ color: 'red' }}>{error}</p>;
     if (!project) return <p>Project not found.</p>;
+
+    // These variables are now used in the return block below
+    const hasPlot = queryResult && queryResult.plot_json;
+    const aggregationResults = queryResult ? queryResult.aggregation_results || [] : [];
 
     return (
         <div>
@@ -154,25 +160,27 @@ function ProjectPage() {
                     </div>
                     <button type="submit" disabled={isQueryLoading}> {isQueryLoading ? 'Thinking...' : 'Generate Code'} </button>
                 </form>
-
                 {queryError && <p style={{ color: 'red' }}>{queryError}</p>}
-                
                 {isQueryLoading && <p>Loading results...</p>}
+            </div>
 
-                {queryResult && (
-                    <div className="results-section">
+            {queryResult && (
+                <div className={hasPlot ? "results-grid" : "results-section"}>
+                    <div className={hasPlot ? "results-grid-left" : ""}>
                         <h3>Generated Code ({queryResult.language})</h3>
-                        <AceEditor mode={queryResult.language} theme="github" onChange={(newCode) => setEditableCode(newCode)} value={editableCode} name="code-editor" editorProps={{ $blockScrolling: true }} width="100%" height="200px" />
+                        <AceEditor mode={queryResult.language} theme="github" onChange={(newCode) => setEditableCode(newCode)} value={editableCode} name="code-editor" editorProps={{ $blockScrolling: true }} width="100%" height="300px" />
                         <button onClick={handleRunCode} style={{marginTop: '10px'}} disabled={isQueryLoading}> {isQueryLoading ? 'Running...' : 'Run Edited Code'} </button>
+                    </div>
+                    <div className={hasPlot ? "results-grid-right" : ""}>
+                        <h3>{hasPlot ? 'Chart' : 'Data Table'}</h3>
+                        {hasPlot && <ResultDisplay result={{ type: 'plotly_json', data: queryResult.plot_json }} />}
                         
-                        <h3>Execution Results</h3>
-                        {/* Use the new ResultDisplay component */}
-                        {queryResult.execution_results.map((result, index) => (
+                        {!hasPlot && aggregationResults.map((result, index) => (
                             <ResultDisplay key={index} result={result} />
                         ))}
                     </div>
-                )}
-            </div>
+                </div>
+            )}
         </div>
     );
 }

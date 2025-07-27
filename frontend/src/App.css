@@ -36,3 +36,17 @@
     transform: rotate(360deg);
   }
 }
+
+.results-grid {
+  display: flex;
+  flex-direction: row;
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.results-grid-left, .results-grid-right {
+  flex: 1; 
+  border: 1px solid #ccc;
+  padding: 10px;
+  border-radius: 5px;
+}

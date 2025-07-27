@@ -35,3 +35,5 @@ ipykernel
 pandas
 pandasql
 plotly
+matplotlib
+

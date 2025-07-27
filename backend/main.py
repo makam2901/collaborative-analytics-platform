@@ -3,8 +3,8 @@ from database.models import ProjectReadWithDatasets
 from database.models import CodeExecutionRequest
 
 import pandas as pd
-from database.models import QueryRequest
-from llm_service import generate_code
+from database.models import QueryRequest, QueryLanguage
+from llm_service import get_user_intent, generate_aggregation_code, generate_visualization_code
 from notebook_runner import execute_code_in_kernel
 
 from fastapi import UploadFile, File
@@ -196,9 +196,7 @@ def upload_dataset(
     
     return new_dataset
 
-# Remove the old query_dataset function and replace it with this one.
-# Replace the existing query_project function in main.py
-
+# In main.py, replace the entire query_project function
 @app.post("/api/projects/{project_id}/query")
 def query_project(
     project_id: int,
@@ -206,86 +204,72 @@ def query_project(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """
-    Takes a natural language question about a project, generates code
-    using the context of all datasets in that project, executes it,
-    and returns the code and result.
-    """
-    # 1. Verify ownership and fetch the project
     project = session.get(Project, project_id)
     if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Project not found")
-
     datasets = project.datasets
     if not datasets:
-        raise HTTPException(status_code=400, detail="No datasets in this project to query.")
+        raise HTTPException(status_code=400, detail="No datasets to query.")
 
-    # 2. Prepare the multi-table context and the code to load the data
-    tables_context = []
-    code_preamble = ["import pandas as pd", "from pandasql import sqldf"]
+    intent = get_user_intent(request.question)
     
-    # We will pass a dictionary of DataFrames to pandasql
-    local_vars_for_exec = {}
-
+    tables_context = []
+    code_preamble = ["import pandas as pd", "from pandasql import sqldf", "import plotly.express as px"]
     for ds in datasets:
         try:
-            df = pd.read_csv(ds.file_path)
-            # For Python, the variable will be the clean table name + '_df'
-            # For SQL, the table name will be just the clean table name
-            df_variable_name = f"{ds.table_name}_df"
-            
-            # Add the dataframe to a dictionary for later execution
-            local_vars_for_exec[df_variable_name] = df
-            
-            # Build the context for the LLM prompt
-            tables_context.append({
-                "table_name": ds.table_name,
-                "variable_name": df_variable_name,
-                "description": ds.description,
-                "columns": df.columns.tolist()
-            })
-            # Add the code to load this specific dataframe to our preamble
-            code_preamble.append(f"{df_variable_name} = pd.read_csv(r'{ds.file_path}')")
-
+            df_head = pd.read_csv(ds.file_path, nrows=5)
+            tables_context.append({"table_name": ds.table_name, "variable_name": f"{ds.table_name}_df", "description": ds.description, "columns": df_head.columns.tolist()})
+            # This line correctly prepares the command to load the dataframe in the kernel
+            code_preamble.append(f"{ds.table_name}_df = pd.read_csv(r'{ds.file_path}')")
         except Exception as e:
             print(f"Could not read or process {ds.file_name}: {e}")
             continue
-    
-    # 3. Generate code using the LLM with the full context
-    generated_code = generate_code(
+
+    aggregation_code = generate_aggregation_code(
         question=request.question,
         tables_context=tables_context,
         language=request.language
     )
-
-    # 4. Prepare the full code for execution
+    
     preamble_str = "\n".join(code_preamble)
     
     if request.language == "sql":
-        # For SQL, pandasql needs the dataframes in its environment. 
-        # We need to map the clean table names to the dataframe variables.
-        # e.g., {'races': races_df, 'results': results_df}
         sql_env_str_list = [f"'{tbl['table_name']}': {tbl['variable_name']}" for tbl in tables_context]
         sql_env_str = "{" + ", ".join(sql_env_str_list) + "}"
-
-        full_code_to_execute = f"""
-{preamble_str}
-pysqldf = lambda q: sqldf(q, {sql_env_str})
-sql_query = '''{generated_code.replace("'''", "''")}'''
-result = pysqldf(sql_query)
-print(result)
-"""
+        clean_agg_code = aggregation_code.replace("'''", "''")
+        # The final 'agg_df' variable is crucial for the visualization step
+        full_agg_code = f"{preamble_str}\npysqldf = lambda q: sqldf(q, {sql_env_str})\nsql_query = '''{clean_agg_code}'''\nagg_df = pysqldf(sql_query)\nprint(agg_df.to_string())"
     else: # Python
-        full_code_to_execute = f"{preamble_str}\n{generated_code}"
+        # THIS IS THE FIX: The aggregation_code is assigned to 'agg_df'
+        full_agg_code = f"{preamble_str}\nagg_df = {aggregation_code}\nprint(agg_df.to_string())"
+    
+    aggregation_results = execute_code_in_kernel(full_agg_code)
 
-    # 5. Execute the code
-    execution_results = execute_code_in_kernel(full_code_to_execute)
-
-    # 6. Return the response
+    plot_json = None
+    if intent == 'chart':
+        agg_result_text = ""
+        for result in reversed(aggregation_results):
+            if result.get('text', '').strip():
+                agg_result_text = result['text']
+                break
+        
+        if agg_result_text:
+            viz_code = generate_visualization_code(request.question, agg_result_text)
+            # The visualization code runs in an environment where 'agg_df' already exists
+            viz_preamble = full_agg_code.split('print')[0]
+            full_viz_code = f"{viz_preamble}\n{viz_code}"
+            viz_results = execute_code_in_kernel(full_viz_code)
+            
+            if viz_results:
+                last_result = viz_results[-1]
+                if last_result['type'] == 'result' and last_result['text'].strip().startswith('{'):
+                    plot_json = last_result['text']
+    
     return {
         "language": request.language,
-        "generated_code": generated_code,
-        "execution_results": execution_results,
+        "aggregation_code": aggregation_code,
+        "aggregation_results": aggregation_results,
+        "plot_json": plot_json,
     }
 
 @app.get("/api/projects/{project_id}", response_model=ProjectReadWithDatasets)
@@ -295,14 +279,21 @@ def read_project(
     session: Session = Depends(get_session),
 ):
     """
-    Retrieve a single project and its datasets, owned by the current user.
+    Retrieve a single project and its datasets, ensuring it belongs to the current user.
     """
-    project = session.get(Project, project_id)
-    if not project or project.owner_id != current_user.id:
+    # This query robustly checks for both the project ID and the correct owner
+    statement = select(Project).where(
+        Project.id == project_id,
+        Project.owner_id == current_user.id
+    )
+    project = session.exec(statement).first()
+
+    # If the query returns nothing, the project either doesn't exist
+    # or doesn't belong to this user, so we raise a 404.
+    if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+        
     return project
-
-
 
 @app.post("/api/projects/{project_id}/run-code")
 def run_code(
@@ -311,44 +302,42 @@ def run_code(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """
-    Executes a given block of code (Python or SQL) within the context
-    of a project's datasets.
-    """
-    # 1. Verify ownership and fetch project datasets (same as before)
     project = session.get(Project, project_id)
     if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Project not found")
-
     datasets = project.datasets
     if not datasets:
         raise HTTPException(status_code=400, detail="No datasets in this project to query.")
 
-    # 2. Prepare the code preamble to load all dataframes (same as before)
-    code_preamble = ["import pandas as pd", "from pandasql import sqldf"]
+    code_preamble = ["import pandas as pd", "from pandasql import sqldf", "import plotly.express as px"]
     for ds in datasets:
-        df_variable_name = f"{ds.table_name}_df"
-        code_preamble.append(f"{df_variable_name} = pd.read_csv(r'{ds.file_path}')")
-
+        code_preamble.append(f"{ds.table_name}_df = pd.read_csv(r'{ds.file_path}')")
     preamble_str = "\n".join(code_preamble)
     
-    # 3. Prepare the full code string for execution based on language
     if request.language == "sql":
         sql_env_str_list = [f"'{ds.table_name}': {ds.table_name}_df" for ds in datasets]
         sql_env_str = "{" + ", ".join(sql_env_str_list) + "}"
-        
+        clean_request_code = request.code.replace("'''", "''")
+
         full_code_to_execute = f"""
 {preamble_str}
 pysqldf = lambda q: sqldf(q, {sql_env_str})
-sql_query = '''{request.code.replace("'''", "''")}'''
+sql_query = '''{clean_request_code}'''
 result = pysqldf(sql_query)
 print(result)
 """
     else: # Python
         full_code_to_execute = f"{preamble_str}\n{request.code}"
-
-    # 4. Execute the code
+    
     execution_results = execute_code_in_kernel(full_code_to_execute)
+    
+    if execution_results:
+        last_result = execution_results[-1]
+        if last_result['type'] == 'result' and last_result['text'].strip().startswith('{'):
+            try:
+                plot_json = last_result['text']
+                execution_results[-1] = {'type': 'plotly_json', 'data': plot_json}
+            except Exception:
+                pass
 
-    # 5. Return only the execution results
     return {"execution_results": execution_results}
