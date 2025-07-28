@@ -50,4 +50,4 @@ jobs:
       # --- Build Docker Images (Optional CD Step) ---
       - name: Build Docker images
         run: |
-          docker-compose build
+          docker-compose up --build
