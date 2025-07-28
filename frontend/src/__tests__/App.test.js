@@ -23,5 +23,8 @@ test('renders login link when not authenticated', () => {
   expect(linkElement).toBeInTheDocument();
 });
 
-console.log('App:', App); // should not be undefined
-console.log('AuthProvider:', AuthProvider); // should be a function
+console.log('LoginPage:', LoginPage);
+console.log('RegisterPage:', RegisterPage);
+console.log('DashboardPage:', DashboardPage);
+console.log('ProjectPage:', ProjectPage);
+console.log('useAuth:', useAuth);
