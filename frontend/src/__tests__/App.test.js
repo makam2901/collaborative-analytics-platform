@@ -1,35 +1,58 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { AuthProvider } from '../context/AuthContext'; // ✅ Adjust path if needed
 import App from '../App';
+// Add useAuth to this import
+import { AuthProvider, useAuth } from '../context/AuthContext';
 
+// Import your page components
 import LoginPage from '../pages/LoginPage';
 import RegisterPage from '../pages/RegisterPage';
 import DashboardPage from '../pages/DashboardPage';
 import ProjectPage from '../pages/ProjectPage';
 
-// We are telling Jest to replace 'react-plotly.js' with a fake component.
-// This prevents it from running the complex Plotly code that crashes the test.
-jest.mock('react-plotly.js', () => ({
-  __esModule: true,
-  default: () => <div data-testid="mocked-plot" />, // A simple, identifiable placeholder
-}));
+// Your console.log statements for debugging
+console.log('LoginPage:', LoginPage);
+console.log('RegisterPage:', RegisterPage);
+console.log('DashboardPage:', DashboardPage);
+console.log('ProjectPage:', ProjectPage);
+console.log('useAuth:', useAuth);
+
 
 test('renders login link when not authenticated', () => {
   render(
-    // The App must be wrapped in the AuthProvider for the useAuth() hook to work
     <AuthProvider>
       <MemoryRouter>
         <App />
       </MemoryRouter>
     </AuthProvider>
   );
-  const linkElement = screen.getByText(/Login/i);
-  expect(linkElement).toBeInTheDocument();
+  const loginLink = screen.getByRole('link', { name: /login/i });
+  expect(loginLink).toBeInTheDocument();
 });
 
-console.log('LoginPage:', LoginPage);
-console.log('RegisterPage:', RegisterPage);
-console.log('DashboardPage:', DashboardPage);
-console.log('ProjectPage:', ProjectPage);
-console.log('useAuth:', useAuth);
+test('renders dashboard link when authenticated', () => {
+  // Mock the useAuth hook to return an authenticated state
+  const mockUseAuth = {
+    token: 'fake-token',
+    login: jest.fn(),
+    logout: jest.fn(),
+    loading: false,
+  };
+
+  jest.spyOn(require('../context/AuthContext'), 'useAuth').mockImplementation(() => mockUseAuth);
+
+
+  render(
+    <AuthProvider>
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>
+    </AuthProvider>
+  );
+
+  const dashboardLink = screen.getByRole('link', { name: /dashboard/i });
+  expect(dashboardLink).toBeInTheDocument();
+
+  // Clean up the mock
+  jest.restoreAllMocks();
+});
