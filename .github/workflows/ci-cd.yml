@@ -27,7 +27,7 @@ jobs:
           pip install httpx # Install testing dependency
 
       - name: Run backend tests
-        run: pytest backend/tests
+        run: python -m pytest backend/tests
 
       # --- Frontend Steps ---
       - name: Set up Node.js
