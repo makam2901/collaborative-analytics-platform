@@ -3,6 +3,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '../context/AuthContext'; // ✅ Adjust path if needed
 import App from '../App';
 
+import LoginPage from '../pages/LoginPage';
+import RegisterPage from '../pages/RegisterPage';
+import DashboardPage from '../pages/DashboardPage';
+import ProjectPage from '../pages/ProjectPage';
+
 // We are telling Jest to replace 'react-plotly.js' with a fake component.
 // This prevents it from running the complex Plotly code that crashes the test.
 jest.mock('react-plotly.js', () => ({
