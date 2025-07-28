@@ -1,9 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
-import { AuthProvider } from '../context/AuthContext'; // Import the provider
+import { AuthProvider } from '../context/AuthContext'; // This was the missing import
 
-// --- THIS IS THE FIX ---
 // We are telling Jest to replace 'react-plotly.js' with a fake component.
 // This prevents it from running the complex Plotly code that crashes the test.
 jest.mock('react-plotly.js', () => ({
