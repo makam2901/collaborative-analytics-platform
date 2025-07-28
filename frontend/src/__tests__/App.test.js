@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { AuthProvider } from '../context/AuthContext'; // ✅ Adjust path if needed
 import App from '../App';
-import { AuthProvider } from '../context/AuthContext'; // This was the missing import
 
 // We are telling Jest to replace 'react-plotly.js' with a fake component.
 // This prevents it from running the complex Plotly code that crashes the test.
@@ -22,3 +22,6 @@ test('renders login link when not authenticated', () => {
   const linkElement = screen.getByText(/Login/i);
   expect(linkElement).toBeInTheDocument();
 });
+
+console.log('App:', App); // should not be undefined
+console.log('AuthProvider:', AuthProvider); // should be a function
