@@ -27,6 +27,8 @@ jobs:
           pip install httpx # Install testing dependency
 
       - name: Run backend tests
+        env:
+          PYTHONPATH: .
         run: python -m pytest backend/tests
 
       # --- Frontend Steps ---
