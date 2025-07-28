@@ -3,7 +3,7 @@ from config import DATABASE_URL
 
 # The engine is the entry point to the database.
 # connect_args is needed for SQLite, but we keep it here for compatibility.
-engine = create_engine(DATABASE_URL, echo=True)
+engine = None
 
 def get_session():
     """

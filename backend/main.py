@@ -2,6 +2,10 @@ from fastapi import UploadFile, File, Form
 from database.models import ProjectReadWithDatasets, VisualizationRequest
 from database.models import CodeExecutionRequest
 
+from sqlmodel import create_engine
+from config import DATABASE_URL
+from database.db import engine as db_engine, create_db_and_tables
+
 import pandas as pd
 from database.models import QueryRequest, QueryLanguage
 from llm_service import generate_aggregation_code, generate_visualization_code
@@ -28,6 +32,23 @@ from database.db import create_db_and_tables, get_session
 from database.models import User, UserCreate
 
 import re
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    This function runs when the application starts.
+    """
+    print("Creating database engine...")
+    global db_engine
+    
+    db_engine = create_engine(DATABASE_URL, echo=True) 
+    
+    create_db_and_tables()
+    yield
+    print("Database engine closed.")
+
+# Initialize FastAPI app with the lifespan manager
+app = FastAPI(title="Collaborative Analytics Platform API", lifespan=lifespan)
 
 def get_kernel_output_as_json(results: list) -> str:
     """Finds the last text output from the kernel and returns it."""
