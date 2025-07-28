@@ -82,3 +82,13 @@ class CodeExecutionRequest(SQLModel):
     language: QueryLanguage
     provider: Optional[str] = "gemini"
     model: Optional[str] = "gemini-1.5-flash"
+
+class VisualizationRequest(SQLModel):
+    original_question: str
+    datatable_json: str
+    chart_type: str
+    x_axis: str
+    y_axis: str
+    legend: Optional[str] = None
+    provider: Optional[str] = "openrouter"
+    model: Optional[str] = "qwen/qwen3-coder:free"

@@ -41,17 +41,17 @@ def _clean_response(text: str) -> str:
     return text.strip().replace("```python", "").replace("```sql", "").replace("```", "").strip()
 
 
-def get_user_intent(question: str, provider: str, model: str) -> str:
-    """Determines if the user wants a chart, table, or single fact."""
-    prompt = f"""
-    Analyze the user's question: "{question}"
-    Respond with ONLY one word: 'chart', 'table', or 'fact'.
-    - 'chart': for explicit requests for a 'chart', 'plot', 'graph', or 'visualization'.
-    - 'table': for questions needing a list or table (e.g., "who are the top 10...?").
-    - 'fact': for questions needing a single value (e.g., "how many...?").
-    """
-    response_text = _generate_response(prompt, provider, model)
-    return _clean_response(response_text).lower()
+# def get_user_intent(question: str, provider: str, model: str) -> str:
+#     """Determines if the user wants a chart, table, or single fact."""
+#     prompt = f"""
+#     Analyze the user's question: "{question}"
+#     Respond with ONLY one word: 'chart', 'table', or 'fact'.
+#     - 'chart': for explicit requests for a 'chart', 'plot', 'graph', or 'visualization'.
+#     - 'table': for questions needing a list or table (e.g., "who are the top 10...?").
+#     - 'fact': for questions needing a single value (e.g., "how many...?").
+#     """
+#     response_text = _generate_response(prompt, provider, model)
+#     return _clean_response(response_text).lower()
 
 def generate_aggregation_code(question: str, tables_context: list, language: QueryLanguage, provider: str, model: str) -> str:
     """Generates the code to produce the final data table, named ans_df."""
@@ -82,24 +82,30 @@ def generate_aggregation_code(question: str, tables_context: list, language: Que
     response_text = _generate_response(prompt, provider, model)
     return _clean_response(response_text)
 
-def generate_visualization_code(question: str, df_head_str: str, provider: str, model: str) -> str:
+def generate_visualization_code(request_data: dict, provider: str, model: str) -> str:
     """
-    Takes a data sample and generates Plotly code to visualize it based on the original question.
+    Generates Plotly code based on user selections and a data preview.
     """
     prompt = f"""
     You are a Python data visualization expert.
-    A user has already aggregated a table of data. Here are the first 5 rows:
-    {df_head_str}
-
-    The user's original question was: "{question}"
+    A user has a data table and wants to create a '{request_data['chart_type']}' chart.
+    Their original question was: "{request_data['original_question']}"
     
-    Your task is to write Python code using `plotly.express` to create a chart that answers the user's question.
+    Here is a sample of their data table (in JSON format):
+    {request_data['datatable_json'][:10]} 
+
+    Your task is to write Python code using `plotly.express` to create this chart.
 
     --- VERY STRICT RESPONSE RULES ---
-    1.  The aggregated data is in a pandas DataFrame named `ans_df`.  <-- THIS IS THE FIX
-    2.  Your code should create a plotly figure object named `fig`.
-    3.  The final line of your code MUST be `fig.to_json()`.
-    4.  Provide ONLY the Python code. No other text, comments, or explanations.
+    1.  The data is in a pandas DataFrame named `ans_df`.
+    2.  The user has selected:
+        - X-Axis: '{request_data['x_axis']}'
+        - Y-Axis: '{request_data['y_axis']}'
+        - Chart Type: '{request_data['chart_type']}'
+        - Legend (Color): '{request_data.get('legend')}' (if provided)
+    3.  Create a plotly figure object named `fig`. Use the user's selections for the axes and chart type.
+    4.  The final line of your code MUST be `fig.to_json()`.
+    5.  Provide ONLY the Python code. No other text or explanations.
     """
     response_text = _generate_response(prompt, provider, model)
     return _clean_response(response_text)

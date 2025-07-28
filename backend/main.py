@@ -1,10 +1,10 @@
 from fastapi import UploadFile, File, Form
-from database.models import ProjectReadWithDatasets
+from database.models import ProjectReadWithDatasets, VisualizationRequest
 from database.models import CodeExecutionRequest
 
 import pandas as pd
 from database.models import QueryRequest, QueryLanguage
-from llm_service import get_user_intent, generate_aggregation_code, generate_visualization_code
+from llm_service import generate_aggregation_code, generate_visualization_code
 from notebook_runner import execute_code_in_kernel
 
 from fastapi import UploadFile, File
@@ -28,6 +28,16 @@ from database.db import create_db_and_tables, get_session
 from database.models import User, UserCreate
 
 import re
+
+def get_kernel_output_as_json(results: list) -> str:
+    """Finds the last text output from the kernel and returns it."""
+    text_output = ""
+    # Look for the last non-empty text result from the kernel
+    for result in reversed(results):
+        if result.get('text', '').strip():
+            text_output = result['text'].strip()
+            break
+    return text_output
 
 def to_snake_case(name: str) -> str:
     """Converts a string to snake_case and removes file extension."""
@@ -203,10 +213,6 @@ def query_project(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """
-    Takes a natural language question, determines user intent, generates code for
-    a data table, optionally generates code for a chart, executes, and returns all results.
-    """
     project = session.get(Project, project_id)
     if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -214,79 +220,50 @@ def query_project(
     if not datasets:
         raise HTTPException(status_code=400, detail="No datasets in this project to query.")
 
-    # 1. Determine User Intent
-    intent = get_user_intent(request.question, request.provider, request.model)
-    
-    # 2. Prepare context and code preamble for execution
     tables_context = []
-    code_preamble = ["import pandas as pd", "from pandasql import sqldf", "import plotly.express as px"]
+    code_preamble = ["import pandas as pd", "from pandasql import sqldf"]
     for ds in datasets:
         try:
-            df_head = pd.read_csv(ds.file_path, nrows=5)
-            columns_with_types = {col: str(dtype) for col, dtype in df_head.dtypes.items()}
+            df = pd.read_csv(ds.file_path)
+            columns_with_types = {col: str(dtype) for col, dtype in df.dtypes.items()}
             tables_context.append({
-                "table_name": ds.table_name,
-                "variable_name": f"{ds.table_name}_df",
-                "description": ds.description,
-                "columns_with_types": columns_with_types
+                "table_name": ds.table_name, "variable_name": f"{ds.table_name}_df",
+                "description": ds.description, "columns_with_types": columns_with_types
             })
             code_preamble.append(f"{ds.table_name}_df = pd.read_csv(r'{ds.file_path}')")
         except Exception as e:
             print(f"Could not read or process {ds.file_name}: {e}")
             continue
 
-    # 3. Generate the primary data aggregation code
     aggregation_code = generate_aggregation_code(
-        question=request.question,
-        tables_context=tables_context,
-        language=request.language,
-        provider=request.provider,
-        model=request.model
+        question=request.question, tables_context=tables_context, language=request.language, provider=request.provider, model=request.model
     )
     
-    # 4. Prepare and execute the aggregation code
     preamble_str = "\n".join(code_preamble)
     if request.language == "sql":
         sql_env_str_list = [f"'{tbl['table_name']}': {tbl['variable_name']}" for tbl in tables_context]
         sql_env_str = "{" + ", ".join(sql_env_str_list) + "}"
         clean_agg_code = aggregation_code.replace("'''", "''")
-        full_agg_code = f"{preamble_str}\npysqldf = lambda q: sqldf(q, {sql_env_str})\nsql_query = '''{clean_agg_code}'''\nans_df = pysqldf(sql_query)\nprint(ans_df.to_string())"
+        full_agg_code = f"{preamble_str}\npysqldf = lambda q: sqldf(q, {sql_env_str})\nsql_query = '''{clean_agg_code}'''\nans_df = pysqldf(sql_query)"
     else: # Python
-        full_agg_code = f"{preamble_str}\n{aggregation_code}\nprint(ans_df.to_string())"
-    
-    aggregation_results = execute_code_in_kernel(full_agg_code)
+        full_agg_code = f"{preamble_str}\n{aggregation_code}"
 
-    # 5. If intent was 'chart', generate and execute visualization code
-    plot_json = None
-    if intent == 'chart':
-        agg_result_text = ""
-        # Find the last text output from the aggregation step to use as context
-        for result in reversed(aggregation_results):
-            if result.get('text', '').strip():
-                agg_result_text = result['text']
-                break
-        
-        if agg_result_text:
-            viz_code = generate_visualization_code(
-                request.question, agg_result_text, request.provider, request.model
-            )
-            # The visualization code runs in an environment where 'ans_df' from the previous step already exists
-            viz_preamble = full_agg_code.split('print')[0]
-            full_viz_code = f"{viz_preamble}\n{viz_code}"
-            viz_results = execute_code_in_kernel(full_viz_code)
-            
-            # Find the Plotly JSON in the new results
-            if viz_results:
-                last_result = viz_results[-1]
-                if last_result['type'] == 'result' and last_result['text'].strip().startswith('{'):
-                    plot_json = last_result['text']
+    # Execute and convert the final ans_df to JSON
+    code_to_get_json = f"{full_agg_code}\nprint(ans_df.to_json(orient='records'))"
+    execution_results = execute_code_in_kernel(code_to_get_json)
+
+    # Extract the JSON data from the last output
+    json_result_str = get_kernel_output_as_json(execution_results)
     
-    # 6. Return all pieces to the frontend
+    # Check for errors from the kernel
+    error_output = next((res for res in execution_results if res['type'] == 'error'), None)
+    if error_output:
+        raise HTTPException(status_code=400, detail=f"Error executing code: {error_output['evalue']}")
+
     return {
         "language": request.language,
         "aggregation_code": aggregation_code,
-        "aggregation_results": aggregation_results,
-        "plot_json": plot_json,
+        "datatable_json": json_result_str, # Send the structured data
     }
 
 @app.get("/api/projects/{project_id}", response_model=ProjectReadWithDatasets)
@@ -321,8 +298,8 @@ def run_code(
     session: Session = Depends(get_session),
 ):
     """
-    Executes a given block of user-edited code (Python or SQL) within the context
-    of a project's datasets and returns the results, including any generated charts.
+    Executes a given block of user-edited code and returns the structured
+    data table as JSON, plus an optional chart.
     """
     project = session.get(Project, project_id)
     if not project or project.owner_id != current_user.id:
@@ -331,46 +308,91 @@ def run_code(
     if not datasets:
         raise HTTPException(status_code=400, detail="No datasets in this project to query.")
 
-    # 1. Prepare the code preamble to load all dataframes and libraries
     code_preamble = ["import pandas as pd", "from pandasql import sqldf", "import plotly.express as px"]
     for ds in datasets:
         code_preamble.append(f"{ds.table_name}_df = pd.read_csv(r'{ds.file_path}')")
     
     preamble_str = "\n".join(code_preamble)
     
-    # 2. Prepare the full code string for execution based on language
+    # Split the user's code to see if it contains a chart part
+    aggregation_code = request.code
+    visualization_code = None
+    if "###CHART_CODE###" in request.code:
+        parts = request.code.split("###CHART_CODE###")
+        aggregation_code = parts[0].strip()
+        visualization_code = parts[1].strip()
+
+    # Always execute the aggregation part to get the data table
     if request.language == "sql":
         sql_env_str_list = [f"'{ds.table_name}': {ds.table_name}_df" for ds in datasets]
         sql_env_str = "{" + ", ".join(sql_env_str_list) + "}"
-        clean_request_code = request.code.replace("'''", "''")
-
-        full_code_to_execute = f"""
-{preamble_str}
-pysqldf = lambda q: sqldf(q, {sql_env_str})
-sql_query = '''{clean_request_code}'''
-ans_df = pysqldf(sql_query)
-print(ans_df.to_string())
-"""
+        clean_agg_code = aggregation_code.replace("'''", "''")
+        full_agg_code = f"{preamble_str}\npysqldf = lambda q: sqldf(q, {sql_env_str})\nsql_query = '''{clean_agg_code}'''\nans_df = pysqldf(sql_query)"
     else: # Python
-        full_code_to_execute = f"{preamble_str}\n{request.code}\nprint(ans_df.to_string())"
-    
-    # 3. Execute the code in the kernel
-    execution_results = execute_code_in_kernel(full_code_to_execute)
-    
-    # 4. Check for Plotly JSON in the results and format the response
-    plot_json = None
-    if execution_results:
-        last_result = execution_results[-1]
-        if isinstance(last_result, dict) and last_result.get('type') == 'result' and last_result.get('text', '').strip().startswith('{'):
-            try:
-                potential_json = last_result['text']
-                execution_results[-1] = {'type': 'plotly_json', 'data': potential_json}
-                plot_json = potential_json
-            except Exception:
-                pass
+        full_agg_code = f"{preamble_str}\n{aggregation_code}"
 
-    # 5. Return both the execution results and any plot data
+    # --- THIS IS THE FIX ---
+    # We now execute the code and explicitly print the final ans_df as JSON
+    code_to_get_json = f"{full_agg_code}\nprint(ans_df.to_json(orient='records'))"
+    aggregation_results = execute_code_in_kernel(code_to_get_json)
+    datatable_json = get_kernel_output_as_json(aggregation_results)
+
+    # If there was chart code, execute it to get the plot
+    plot_json = None
+    if visualization_code:
+        viz_preamble = f"{preamble_str}\n{aggregation_code}"
+        full_viz_code = f"{viz_preamble}\n{visualization_code}"
+        viz_results = execute_code_in_kernel(full_viz_code)
+        
+        if viz_results:
+            last_result = viz_results[-1]
+            if last_result.get('type') == 'result' and last_result.get('text', '').strip().startswith('{'):
+                plot_json = last_result['text']
+
+    # Check for kernel errors
+    error_output = next((res for res in aggregation_results if res['type'] == 'error'), None)
+    if error_output:
+        raise HTTPException(status_code=400, detail=f"Error executing code: {error_output['evalue']}")
+
     return {
-        "execution_results": execution_results,
+        "language": request.language,
+        "aggregation_code": request.code,
+        "datatable_json": datatable_json,
         "plot_json": plot_json
     }
+
+
+@app.post("/api/projects/{project_id}/visualize")
+def visualize_data(
+    project_id: int,
+    request: VisualizationRequest,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    project = session.get(Project, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Generate the visualization code
+    viz_code = generate_visualization_code(request.dict(), request.provider, request.model)
+
+    # Prepare the environment for execution
+    # We load the full data table (ans_df) from the JSON sent by the frontend
+    code_preamble = [
+        "import pandas as pd",
+        "import plotly.express as px",
+        f"ans_df = pd.read_json('''{request.datatable_json}''', orient='records')"
+    ]
+    preamble_str = "\n".join(code_preamble)
+    full_viz_code = f"{preamble_str}\n{viz_code}"
+    
+    viz_results = execute_code_in_kernel(full_viz_code)
+    
+    plot_json_result = next((res for res in viz_results if res['type'] == 'json_result'), None)
+    plot_json = plot_json_result['text'] if plot_json_result else None
+
+    error_output = next((res for res in viz_results if res['type'] == 'error'), None)
+    if error_output:
+        raise HTTPException(status_code=400, detail=f"Error visualizing data: {error_output['evalue']}")
+
+    return {"plot_json": plot_json, "visualization_code": viz_code}

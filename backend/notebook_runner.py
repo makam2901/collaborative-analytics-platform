@@ -1,18 +1,17 @@
 import jupyter_client
 from queue import Empty
+import json
 
 def execute_code_in_kernel(code: str) -> list:
     """
     Executes a string of Python code in a temporary Jupyter kernel
-    and captures the output.
+    and captures the output, correctly handling JSON.
     """
-    # Start a new kernel
     km = jupyter_client.KernelManager()
     km.start_kernel()
     kc = km.client()
     kc.start_channels()
 
-    # Wait for the client to be ready
     try:
         kc.wait_for_ready(timeout=60)
     except RuntimeError:
@@ -20,46 +19,42 @@ def execute_code_in_kernel(code: str) -> list:
         km.shutdown_kernel()
         raise
 
-    # Execute the code
     kc.execute(code)
     results = []
 
     while True:
         try:
-            # Get messages from the kernel, with a timeout
-            msg = kc.get_iopub_msg(timeout=10)
+            msg = kc.get_iopub_msg(timeout=20)
         except Empty:
-            # No more messages, break the loop
             break
 
-        # Check the message type and content
         msg_type = msg['header']['msg_type']
-        
-        if msg.get('parent_header', {}).get('msg_type') != 'execute_request':
-             continue # only process messages from our execution
+        content = msg.get('content', {})
 
-        if msg_type == 'status' and msg['content']['execution_state'] == 'idle':
-            # Kernel is done executing, break the loop
+        if msg_type == 'status' and content.get('execution_state') == 'idle':
             break
         elif msg_type == 'stream':
-            # This is a print() statement or other stdout
-            results.append({'type': 'stdout', 'text': msg['content']['text']})
+            results.append({'type': 'stdout', 'text': content.get('text', '')})
         elif msg_type == 'execute_result':
-            # This is the result of the last line of a cell
-            data = msg['content']['data'].get('text/plain', '')
-            results.append({'type': 'result', 'text': data})
+            # --- THIS IS THE FIX ---
+            # Check for rich JSON output first, which is what fig.to_json() produces.
+            if 'application/json' in content.get('data', {}):
+                # We dump and reload to ensure it's a clean, double-quoted JSON string
+                json_data = json.dumps(content['data']['application/json'])
+                results.append({'type': 'json_result', 'text': json_data})
+            # Fallback to plain text if no JSON is available
+            else:
+                text_data = content.get('data', {}).get('text/plain', '')
+                results.append({'type': 'result', 'text': text_data})
         elif msg_type == 'error':
-            # An error occurred
-            error_content = {
+            results.append({
                 'type': 'error',
-                'ename': msg['content']['ename'],
-                'evalue': msg['content']['evalue'],
-                'traceback': msg['content']['traceback'],
-            }
-            results.append(error_content)
+                'ename': content.get('ename', 'Unknown error'),
+                'evalue': content.get('evalue', '...'),
+                'traceback': content.get('traceback', []),
+            })
             break
 
-    # Shut down the kernel and clean up
     kc.stop_channels()
     km.shutdown_kernel(now=True)
     return results
