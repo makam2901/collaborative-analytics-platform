@@ -1,65 +1,88 @@
 import google.generativeai as genai
-from config import GOOGLE_API_KEY
+import ollama
+from openai import OpenAI
+from http import HTTPStatus
+from config import (GOOGLE_API_KEY, OPENROUTER_API_KEY, OLLAMA_API_BASE)
 from database.models import QueryLanguage
 
-# Configure the generative AI client
-genai.configure(api_key=GOOGLE_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
 
-def get_user_intent(question: str) -> str:
-    """
-    Uses the LLM to determine if the user wants a chart, a table, or a single fact.
-    """
-    prompt = f"""
-    Analyze the user's question and determine the primary intent.
-    The question is: "{question}"
-    
-    Possible intents are:
-    - "chart": If the user explicitly asks for a 'chart', 'plot', 'graph', or 'visualization'.
-    - "table": If the user asks a general question that would best be answered with a table of data (e.g., "who were the top 10 finishers?", "list all races in 2023").
-    - "fact": If the user asks a question that can be answered with a single value (e.g., "how many races were there?", "who won the championship?").
-    
-    Respond with ONLY one word: 'chart', 'table', or 'fact'.
-    """
+def _generate_response(prompt: str, provider: str, model: str) -> str:
+    """Internal function to call the selected LLM provider and model."""
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip().lower()
-    except Exception:
-        return "table" # Default to table on error
+        if provider == 'gemini':
+            genai.configure(api_key=GOOGLE_API_KEY)
+            gemini_model = genai.GenerativeModel(model)
+            response = gemini_model.generate_content(prompt)
+            return response.text
+        elif provider == 'ollama':
+            ollama_client = ollama.Client(host=OLLAMA_API_BASE)
+            response = ollama_client.generate(model=model, prompt=prompt)
+            return response['response']
+        elif provider == 'openrouter':
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=OPENROUTER_API_KEY,
+            )
+            completion = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return completion.choices[0].message.content
+        else:
+            raise ValueError(f"Invalid LLM provider specified: {provider}")
+    except Exception as e:
+        print(f"An error occurred with the {provider} API: {e}")
+        error_message = str(e).replace("'", "\\'")
+        return f"print('Error generating code: {error_message}')"
 
-def generate_aggregation_code(question: str, tables_context: list, language: QueryLanguage) -> str:
+
+def _clean_response(text: str) -> str:
+    """Cleans markdown and other formatting from the LLM response."""
+    return text.strip().replace("```python", "").replace("```sql", "").replace("```", "").strip()
+
+
+def get_user_intent(question: str, provider: str, model: str) -> str:
+    """Determines if the user wants a chart, table, or single fact."""
+    prompt = f"""
+    Analyze the user's question: "{question}"
+    Respond with ONLY one word: 'chart', 'table', or 'fact'.
+    - 'chart': for explicit requests for a 'chart', 'plot', 'graph', or 'visualization'.
+    - 'table': for questions needing a list or table (e.g., "who are the top 10...?").
+    - 'fact': for questions needing a single value (e.g., "how many...?").
     """
-    Generates the Python or SQL code to get the raw data needed to answer a question.
-    This is based on the high-quality prompt you provided.
-    """
+    response_text = _generate_response(prompt, provider, model)
+    return _clean_response(response_text).lower()
+
+def generate_aggregation_code(question: str, tables_context: list, language: QueryLanguage, provider: str, model: str) -> str:
+    """Generates the code to produce the final data table, named ans_df."""
     context_str = ""
     for table in tables_context:
         name_to_use = table['variable_name'] if language == QueryLanguage.python else table['table_name']
+        columns_info = ", ".join([f"{name} ({dtype})" for name, dtype in table['columns_with_types'].items()])
+        
         context_str += f"- Name: `{name_to_use}`\n"
         context_str += f"  Description: {table['description']}\n"
-        context_str += f"  Columns: {', '.join(table['columns'])}\n\n"
+        context_str += f"  Columns (with data types): {columns_info}\n\n"
         
     prompt = f"""
     You are an expert {language.value} data analyst. A user wants to answer the question: "{question}".
-    You have access to the following data:
+    You have access to the following dataframes/tables which are ALREADY LOADED into memory:
     {context_str}
-    
-    Your task is to write the {language.value} code to produce the data table required to answer the question.
+    Your task is to write a short, clean {language.value} script to produce the final data table that answers the question.
 
-    --- RESPONSE RULES ---
-    1.  Provide ONLY the raw {language.value} code.
-    2.  Do not include comments or explanations.
-    3.  Do not define functions (e.g., no `def my_function():`).
-    4.  Do not visualize the data.
-    5.  The final line of your code must be the resulting DataFrame or data expression itself.
+    --- VERY STRICT RESPONSE RULES ---
+    1.  Pay close attention to the data types. If a column is a string (object), you may need to convert it to a number before performing calculations.
+    2.  Provide ONLY the raw {language.value} code.
+    3.  You are strictly forbidden from writing `pd.read_csv` or creating your own DataFrames (e.g., NO `pd.DataFrame({{...}})`). You MUST use the provided dataframes.
+    4.  Structure your code in logical steps. For each step (e.g., filtering, merging, grouping), assign the result to a new DataFrame with a descriptive name (e.g., `filtered_races_df`, `merged_results_df`).
+    5.  The final variable containing the answer MUST be named `ans_df`.
+    6.  DO NOT include comments, explanations, or function definitions (no `def my_function():`).
+    7.  DO NOT visualize the data. Just produce the final `ans_df`.
     """
-    try:
-        response = model.generate_content(prompt)
-        return response.text.strip().replace("```python", "").replace("```sql", "").replace("```", "").strip()
-    except Exception as e:
-        return f"print('Error: {e}')"
+    response_text = _generate_response(prompt, provider, model)
+    return _clean_response(response_text)
 
-def generate_visualization_code(question: str, df_head_str: str) -> str:
+def generate_visualization_code(question: str, df_head_str: str, provider: str, model: str) -> str:
     """
     Takes a data sample and generates Plotly code to visualize it based on the original question.
     """
@@ -72,14 +95,11 @@ def generate_visualization_code(question: str, df_head_str: str) -> str:
     
     Your task is to write Python code using `plotly.express` to create a chart that answers the user's question.
 
-    --- RESPONSE RULES ---
-    1.  The aggregated data is in a pandas DataFrame named `agg_df`.
+    --- VERY STRICT RESPONSE RULES ---
+    1.  The aggregated data is in a pandas DataFrame named `ans_df`.  <-- THIS IS THE FIX
     2.  Your code should create a plotly figure object named `fig`.
     3.  The final line of your code MUST be `fig.to_json()`.
-    4.  Do not include any other code, explanations, comments, or markdown formatting.
+    4.  Provide ONLY the Python code. No other text, comments, or explanations.
     """
-    try:
-        response = model.generate_content(prompt)
-        return response.text.strip().replace("```python", "").replace("```", "").strip()
-    except Exception as e:
-        return f"print('Error: {e}')"
+    response_text = _generate_response(prompt, provider, model)
+    return _clean_response(response_text)

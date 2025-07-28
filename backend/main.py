@@ -196,7 +196,6 @@ def upload_dataset(
     
     return new_dataset
 
-# In main.py, replace the entire query_project function
 @app.post("/api/projects/{project_id}/query")
 def query_project(
     project_id: int,
@@ -204,67 +203,85 @@ def query_project(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    """
+    Takes a natural language question, determines user intent, generates code for
+    a data table, optionally generates code for a chart, executes, and returns all results.
+    """
     project = session.get(Project, project_id)
     if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Project not found")
     datasets = project.datasets
     if not datasets:
-        raise HTTPException(status_code=400, detail="No datasets to query.")
+        raise HTTPException(status_code=400, detail="No datasets in this project to query.")
 
-    intent = get_user_intent(request.question)
+    # 1. Determine User Intent
+    intent = get_user_intent(request.question, request.provider, request.model)
     
+    # 2. Prepare context and code preamble for execution
     tables_context = []
     code_preamble = ["import pandas as pd", "from pandasql import sqldf", "import plotly.express as px"]
     for ds in datasets:
         try:
             df_head = pd.read_csv(ds.file_path, nrows=5)
-            tables_context.append({"table_name": ds.table_name, "variable_name": f"{ds.table_name}_df", "description": ds.description, "columns": df_head.columns.tolist()})
-            # This line correctly prepares the command to load the dataframe in the kernel
+            columns_with_types = {col: str(dtype) for col, dtype in df_head.dtypes.items()}
+            tables_context.append({
+                "table_name": ds.table_name,
+                "variable_name": f"{ds.table_name}_df",
+                "description": ds.description,
+                "columns_with_types": columns_with_types
+            })
             code_preamble.append(f"{ds.table_name}_df = pd.read_csv(r'{ds.file_path}')")
         except Exception as e:
             print(f"Could not read or process {ds.file_name}: {e}")
             continue
 
+    # 3. Generate the primary data aggregation code
     aggregation_code = generate_aggregation_code(
         question=request.question,
         tables_context=tables_context,
-        language=request.language
+        language=request.language,
+        provider=request.provider,
+        model=request.model
     )
     
+    # 4. Prepare and execute the aggregation code
     preamble_str = "\n".join(code_preamble)
-    
     if request.language == "sql":
         sql_env_str_list = [f"'{tbl['table_name']}': {tbl['variable_name']}" for tbl in tables_context]
         sql_env_str = "{" + ", ".join(sql_env_str_list) + "}"
         clean_agg_code = aggregation_code.replace("'''", "''")
-        # The final 'agg_df' variable is crucial for the visualization step
-        full_agg_code = f"{preamble_str}\npysqldf = lambda q: sqldf(q, {sql_env_str})\nsql_query = '''{clean_agg_code}'''\nagg_df = pysqldf(sql_query)\nprint(agg_df.to_string())"
+        full_agg_code = f"{preamble_str}\npysqldf = lambda q: sqldf(q, {sql_env_str})\nsql_query = '''{clean_agg_code}'''\nans_df = pysqldf(sql_query)\nprint(ans_df.to_string())"
     else: # Python
-        # THIS IS THE FIX: The aggregation_code is assigned to 'agg_df'
-        full_agg_code = f"{preamble_str}\nagg_df = {aggregation_code}\nprint(agg_df.to_string())"
+        full_agg_code = f"{preamble_str}\n{aggregation_code}\nprint(ans_df.to_string())"
     
     aggregation_results = execute_code_in_kernel(full_agg_code)
 
+    # 5. If intent was 'chart', generate and execute visualization code
     plot_json = None
     if intent == 'chart':
         agg_result_text = ""
+        # Find the last text output from the aggregation step to use as context
         for result in reversed(aggregation_results):
             if result.get('text', '').strip():
                 agg_result_text = result['text']
                 break
         
         if agg_result_text:
-            viz_code = generate_visualization_code(request.question, agg_result_text)
-            # The visualization code runs in an environment where 'agg_df' already exists
+            viz_code = generate_visualization_code(
+                request.question, agg_result_text, request.provider, request.model
+            )
+            # The visualization code runs in an environment where 'ans_df' from the previous step already exists
             viz_preamble = full_agg_code.split('print')[0]
             full_viz_code = f"{viz_preamble}\n{viz_code}"
             viz_results = execute_code_in_kernel(full_viz_code)
             
+            # Find the Plotly JSON in the new results
             if viz_results:
                 last_result = viz_results[-1]
                 if last_result['type'] == 'result' and last_result['text'].strip().startswith('{'):
                     plot_json = last_result['text']
     
+    # 6. Return all pieces to the frontend
     return {
         "language": request.language,
         "aggregation_code": aggregation_code,
@@ -295,6 +312,7 @@ def read_project(
         
     return project
 
+
 @app.post("/api/projects/{project_id}/run-code")
 def run_code(
     project_id: int,
@@ -302,6 +320,10 @@ def run_code(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
+    """
+    Executes a given block of user-edited code (Python or SQL) within the context
+    of a project's datasets and returns the results, including any generated charts.
+    """
     project = session.get(Project, project_id)
     if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -309,11 +331,14 @@ def run_code(
     if not datasets:
         raise HTTPException(status_code=400, detail="No datasets in this project to query.")
 
+    # 1. Prepare the code preamble to load all dataframes and libraries
     code_preamble = ["import pandas as pd", "from pandasql import sqldf", "import plotly.express as px"]
     for ds in datasets:
         code_preamble.append(f"{ds.table_name}_df = pd.read_csv(r'{ds.file_path}')")
+    
     preamble_str = "\n".join(code_preamble)
     
+    # 2. Prepare the full code string for execution based on language
     if request.language == "sql":
         sql_env_str_list = [f"'{ds.table_name}': {ds.table_name}_df" for ds in datasets]
         sql_env_str = "{" + ", ".join(sql_env_str_list) + "}"
@@ -323,21 +348,29 @@ def run_code(
 {preamble_str}
 pysqldf = lambda q: sqldf(q, {sql_env_str})
 sql_query = '''{clean_request_code}'''
-result = pysqldf(sql_query)
-print(result)
+ans_df = pysqldf(sql_query)
+print(ans_df.to_string())
 """
     else: # Python
-        full_code_to_execute = f"{preamble_str}\n{request.code}"
+        full_code_to_execute = f"{preamble_str}\n{request.code}\nprint(ans_df.to_string())"
     
+    # 3. Execute the code in the kernel
     execution_results = execute_code_in_kernel(full_code_to_execute)
     
+    # 4. Check for Plotly JSON in the results and format the response
+    plot_json = None
     if execution_results:
         last_result = execution_results[-1]
-        if last_result['type'] == 'result' and last_result['text'].strip().startswith('{'):
+        if isinstance(last_result, dict) and last_result.get('type') == 'result' and last_result.get('text', '').strip().startswith('{'):
             try:
-                plot_json = last_result['text']
-                execution_results[-1] = {'type': 'plotly_json', 'data': plot_json}
+                potential_json = last_result['text']
+                execution_results[-1] = {'type': 'plotly_json', 'data': potential_json}
+                plot_json = potential_json
             except Exception:
                 pass
 
-    return {"execution_results": execution_results}
+    # 5. Return both the execution results and any plot data
+    return {
+        "execution_results": execution_results,
+        "plot_json": plot_json
+    }

@@ -25,6 +25,8 @@ scikit-learn
 
 # LLM Integration
 google-generativeai
+ollama
+openai
 
 # Utilities
 python-dotenv

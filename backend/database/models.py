@@ -64,7 +64,9 @@ class QueryLanguage(str, Enum):
 class QueryRequest(SQLModel):
     """Data model for a user's natural language query."""
     question: str
-    language: QueryLanguage = QueryLanguage.python # Default to python
+    language: QueryLanguage = QueryLanguage.python
+    provider: Optional[str] = "gemini"
+    model: Optional[str] = "gemini-1.5-flash"
 
 class DatasetRead(SQLModel):
     id: int
@@ -78,3 +80,5 @@ class ProjectReadWithDatasets(ProjectRead):
 class CodeExecutionRequest(SQLModel):
     code: str
     language: QueryLanguage
+    provider: Optional[str] = "gemini"
+    model: Optional[str] = "gemini-1.5-flash"
