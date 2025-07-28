@@ -28,7 +28,7 @@ jobs:
 
       - name: Run backend tests
         env:
-          PYTHONPATH: .
+          PYTHONPATH: ./backend
         run: python -m pytest backend/tests
 
       # --- Frontend Steps ---
