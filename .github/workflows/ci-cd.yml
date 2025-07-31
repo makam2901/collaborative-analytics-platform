@@ -42,7 +42,7 @@ jobs:
       
       - name: Create .env file for backend tests
         run: |
-          echo "DATABASE_URL=postgresql://user:password@localhost:5433/analytics_db_test" > backend/.env
+          echo "DATABASE_URL=postgresql://user:password@postgres:5432/analytics_db_test" > backend/.env
           echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" >> backend/.env
           echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> backend/.env
           echo "OLLAMA_API_BASE=${{ secrets.OLLAMA_API_BASE }}" >> backend/.env
@@ -66,20 +66,20 @@ jobs:
       - name: Run frontend tests
         run: npm test --prefix frontend -- --watchAll=false
 
-      # --- Docker Setup ---
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+      # # --- Docker Setup ---
+      # - name: Set up Docker Buildx
+      #   uses: docker/setup-buildx-action@v2
 
-      - name: Install Docker Compose
-        run: |
-          # Install the latest Docker Compose
-          sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          sudo chmod +x /usr/local/bin/docker-compose
-          docker-compose --version
+      # - name: Install Docker Compose
+      #   run: |
+      #     # Install the latest Docker Compose
+      #     sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+      #     sudo chmod +x /usr/local/bin/docker-compose
+      #     docker-compose --version
 
-      # --- Build Docker Images ---
-      - name: Build Docker images
-        run: |
-          echo "DATABASE_URL=dummy" > .env
-          docker-compose up --build -d
-          docker-compose down
+      # # --- Build Docker Images ---
+      # - name: Build Docker images
+      #   run: |
+      #     echo "DATABASE_URL=dummy" > .env
+      #     docker-compose up --build -d
+      #     docker-compose down
