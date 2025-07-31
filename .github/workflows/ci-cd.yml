@@ -33,7 +33,6 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OLLAMA_API_BASE: ${{ secrets.OLLAMA_API_BASE }}
           PYTHONPATH: ./backend
-          CI: "true"
         run: python -m pytest backend/tests
 
       # --- Frontend Steps ---
