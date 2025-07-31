@@ -1,54 +1,44 @@
-from fastapi import UploadFile, File, Form
-from database.models import ProjectReadWithDatasets, VisualizationRequest
-from database.models import CodeExecutionRequest
-
-from sqlmodel import create_engine
-from config import DATABASE_URL
-from database.db import engine as db_engine, create_db_and_tables
-
-import pandas as pd
-from database.models import QueryRequest, QueryLanguage
-from llm_service import generate_aggregation_code, generate_visualization_code
-from notebook_runner import execute_code_in_kernel
-
-from fastapi import UploadFile, File
-import shutil
+# Standard Library Imports
 import os
-from database.models import Dataset
-
-from database.models import Project, ProjectCreate, ProjectRead
-from auth import get_current_user
+import re
+import shutil
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
-from fastapi import Depends, FastAPI, HTTPException, status
+# Third-Party Library Imports
+import pandas as pd
+from sqlmodel import Session, create_engine, select
+
+from fastapi import (
+    Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlmodel import Session, select
 
-from auth import (ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token,
-                  get_password_hash, verify_password)
-from database.db import create_db_and_tables, get_session
-from database.models import User, UserCreate
+# Configuration and Core Setup
+from config import DATABASE_URL
 
-import re
+# Authentication Logic
+from auth import (
+    get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES, create_access_token,
+    get_password_hash, verify_password
+)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    This function runs when the application starts.
-    """
-    print("Creating database engine...")
-    global db_engine
-    
-    db_engine = create_engine(DATABASE_URL, echo=True) 
-    
-    create_db_and_tables()
-    yield
-    print("Database engine closed.")
+# Database Layer
+from sqlmodel import SQLModel, create_engine
+import database.db as db
+from database.db import get_session
+from database.models import (
+    User, UserCreate,
+    Project, ProjectCreate, ProjectRead, ProjectReadWithDatasets,
+    Dataset,
+    QueryRequest, QueryLanguage,
+    VisualizationRequest, CodeExecutionRequest
+)
 
-# Initialize FastAPI app with the lifespan manager
-app = FastAPI(title="Collaborative Analytics Platform API", lifespan=lifespan)
+# LLM & Notebook Services
+from llm_service import generate_aggregation_code, generate_visualization_code
+from notebook_runner import execute_code_in_kernel
 
 def get_kernel_output_as_json(results: list) -> str:
     """Finds the last text output from the kernel and returns it."""
@@ -67,16 +57,24 @@ def to_snake_case(name: str) -> str:
     s = re.sub(r'(?<!^)(?=[A-Z])', '_', s).lower() # Handle CamelCase
     return re.sub(r'[^a-zA-Z0-9_]', '', s) # Remove invalid characters
 
-# Lifespan manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Creating tables...")
-    create_db_and_tables()
+    """
+    This function runs when the application starts up.
+    It creates the database connection and then the tables.
+    """
+    print("Creating database engine...")
+    
+    engine = create_engine(DATABASE_URL, echo=True) 
+    db.engine = engine
+    SQLModel.metadata.create_all(engine)
+    
     yield
-    print("Tables created.")
+    
+    print("Database engine closed.")
 
 
-# Initialize FastAPI app
+# Initialize FastAPI app with the corrected lifespan manager
 app = FastAPI(title="Collaborative Analytics Platform API", lifespan=lifespan)
 
 # CORS Middleware
